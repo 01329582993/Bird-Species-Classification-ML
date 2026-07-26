@@ -1,0 +1,12 @@
+raw_cub/
+dataset/
+dataset_20_species/
+*.tgz
+*.tar.gz
+processed_data/
+raw_cub/
+dataset/
+dataset_20_species/
+*.tgz
+*.tar.gz
+processed_data/
