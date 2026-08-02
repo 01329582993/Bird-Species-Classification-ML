@@ -16,16 +16,18 @@ def list_dataset_files(dataset_dir: str) -> list[Path]:
 def preprocess_and_save_image(
     src_path: Path, 
     dst_path: Path, 
-    target_size: tuple[int, int] = (224, 224)
+    target_size: tuple[int, int] = (224, 224),
+    bbox: tuple[float, float, float, float] = None
 ) -> tuple[bool, str]:
     """
     Loads an image from src_path, converts it to RGB, resizes it to target_size,
-    and saves it to dst_path.
+    and saves it to dst_path. Optionally crops the image to the specified bbox.
     
     Parameters:
         src_path (Path): Path to the source raw image.
         dst_path (Path): Path where the resized image should be saved.
         target_size (tuple): Target dimensions (width, height).
+        bbox (tuple): Bounding box coordinates (x, y, width, height).
         
     Returns:
         tuple[bool, str]: (success, error_message)
@@ -36,6 +38,17 @@ def preprocess_and_save_image(
         
         # Load and process the image
         with Image.open(src_path) as img:
+            # Crop to bounding box if provided
+            if bbox is not None:
+                x, y, w, h = bbox
+                img_width, img_height = img.size
+                left = max(0, int(x))
+                upper = max(0, int(y))
+                right = min(img_width, int(x + w))
+                lower = min(img_height, int(y + h))
+                if right > left and lower > upper:
+                    img = img.crop((left, upper, right, lower))
+
             # Convert palette/RGBA images to RGB
             img_rgb = img.convert("RGB")
             # Resize image with high-quality Lanczos/Resampling filter
@@ -46,6 +59,7 @@ def preprocess_and_save_image(
         return True, ""
     except Exception as e:
         return False, str(e)
+
 
 
 def load_normalized_image(image_path: Path) -> np.ndarray:
