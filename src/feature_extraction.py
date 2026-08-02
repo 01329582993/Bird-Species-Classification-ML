@@ -24,8 +24,9 @@ def extract_hog_features(
     target_size: tuple[int, int] = (128, 128)
 ) -> "np.ndarray":
     """
-    Extract HOG features from an image.
-    Converts image to grayscale, resizes to target_size, and computes HOG.
+    Extract HOG features from an image (grayscale + per-channel RGB HOG).
+    Converts image to grayscale AND RGB, resizes to target_size, and computes
+    HOG on all four channels, then concatenates them for richer representation.
     
     Parameters:
         image_path_or_img: Path to the image or a PIL Image object.
@@ -39,25 +40,30 @@ def extract_hog_features(
     from skimage.feature import hog
 
     if isinstance(image_path_or_img, (str, Path)):
-        img = Image.open(image_path_or_img)
+        img = Image.open(image_path_or_img).convert("RGB")
     else:
-        img = image_path_or_img
+        img = image_path_or_img.convert("RGB")
         
-    # Convert to grayscale and resize
-    img_gray = img.convert("L")
-    img_resized = img_gray.resize(target_size, Image.Resampling.LANCZOS)
-    img_arr = np.array(img_resized)
-    
-    # Extract HOG
-    features = hog(
-        img_arr,
+    img_resized = img.resize(target_size, Image.Resampling.LANCZOS)
+    img_arr = np.array(img_resized)          # H x W x 3, uint8
+
+    hog_params = dict(
         orientations=9,
         pixels_per_cell=(8, 8),
         cells_per_block=(2, 2),
         block_norm='L2-Hys',
         visualize=False
     )
-    return features.astype(np.float32)
+
+    # Grayscale HOG
+    gray = np.mean(img_arr, axis=2).astype(np.uint8)
+    feats = [hog(gray, **hog_params)]
+
+    # Per-channel HOG (R, G, B)
+    for ch in range(3):
+        feats.append(hog(img_arr[:, :, ch], **hog_params))
+
+    return np.concatenate(feats).astype(np.float32)
 
 
 def extract_color_histogram(
@@ -65,42 +71,49 @@ def extract_color_histogram(
     bins: int = 32
 ) -> "np.ndarray":
     """
-    Extract a normalized RGB color histogram from an image.
+    Extract a normalized multi-colorspace color histogram from an image.
+    Computes histograms in RGB, HSV, and L*a*b* color spaces and concatenates
+    them for a richer color representation (size: 9 * bins).
     
     Parameters:
         image_path_or_img: Path to the image or a PIL Image object.
-        bins: Number of histogram bins for each RGB channel.
+        bins: Number of histogram bins for each channel.
         
     Returns:
-        np.ndarray: Concatenated RGB histogram feature vector (size: 3 * bins).
+        np.ndarray: Concatenated multi-colorspace histogram feature vector.
     """
     import numpy as np
     from PIL import Image
+    import cv2
 
     if isinstance(image_path_or_img, (str, Path)):
-        img = Image.open(image_path_or_img)
+        img = Image.open(image_path_or_img).convert("RGB")
     else:
-        img = image_path_or_img
-        
-    # Ensure RGB
-    img_rgb = img.convert("RGB")
-    img_arr = np.array(img_rgb)
-    
-    channel_histograms = []
-    for channel_index in range(3):
-        channel_values = img_arr[:, :, channel_index]
-        histogram, _ = np.histogram(
-            channel_values,
-            bins=bins,
-            range=(0, 256)
-        )
-        histogram = histogram.astype(np.float32)
-        histogram_sum = histogram.sum()
-        if histogram_sum > 0:
-            histogram /= histogram_sum
-        channel_histograms.append(histogram)
-        
-    return np.concatenate(channel_histograms)
+        img = image_path_or_img.convert("RGB")
+
+    img_rgb = np.array(img, dtype=np.uint8)
+    img_hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
+    img_lab = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2LAB)
+
+    all_hists = []
+    for colorspace_img, ranges in [
+        (img_rgb, [(0, 256)] * 3),
+        (img_hsv, [(0, 180), (0, 256), (0, 256)]),
+        (img_lab, [(0, 256)] * 3),
+    ]:
+        for ch in range(3):
+            hist, _ = np.histogram(
+                colorspace_img[:, :, ch],
+                bins=bins,
+                range=ranges[ch]
+            )
+            hist = hist.astype(np.float32)
+            s = hist.sum()
+            if s > 0:
+                hist /= s
+            all_hists.append(hist)
+
+    return np.concatenate(all_hists)
 
 
 def extract_lbp_histogram(
@@ -109,15 +122,17 @@ def extract_lbp_histogram(
     radius: int = 1
 ) -> "np.ndarray":
     """
-    Extract a normalized Local Binary Pattern histogram from an image.
+    Extract a multi-scale LBP histogram from an image.
+    Computes LBP at two scales (radius=1 and radius=3) and concatenates
+    the histograms for richer texture representation.
     
     Parameters:
         image_path_or_img: Path to the image or a PIL Image object.
-        number_of_points: Number of neighboring points.
-        radius: Radius around the center pixel.
+        number_of_points: Number of neighboring points (for radius=1 scale).
+        radius: Primary radius (a second scale at 3x is always added).
         
     Returns:
-        np.ndarray: Normalized LBP histogram feature vector (size: number_of_points + 2).
+        np.ndarray: Concatenated multi-scale LBP histogram.
     """
     import numpy as np
     from PIL import Image
@@ -128,29 +143,29 @@ def extract_lbp_histogram(
     else:
         img = image_path_or_img
         
-    # Convert to grayscale
     img_gray = img.convert("L")
     img_arr = np.array(img_gray, dtype=np.uint8)
-    
-    lbp_image = local_binary_pattern(
-        img_arr,
-        P=number_of_points,
-        R=radius,
-        method="uniform"
-    )
-    
-    number_of_bins = number_of_points + 2
-    histogram, _ = np.histogram(
-        lbp_image.ravel(),
-        bins=np.arange(0, number_of_bins + 1),
-        range=(0, number_of_bins)
-    )
-    histogram = histogram.astype(np.float32)
-    histogram_sum = histogram.sum()
-    if histogram_sum > 0:
-        histogram /= histogram_sum
-        
-    return histogram
+
+    def _lbp_hist(arr, P, R):
+        lbp = local_binary_pattern(arr, P=P, R=R, method="uniform")
+        n_bins = P + 2
+        hist, _ = np.histogram(
+            lbp.ravel(),
+            bins=np.arange(0, n_bins + 1),
+            range=(0, n_bins)
+        )
+        hist = hist.astype(np.float32)
+        s = hist.sum()
+        if s > 0:
+            hist /= s
+        return hist
+
+    # Scale 1: small radius (fine texture)
+    hist1 = _lbp_hist(img_arr, P=number_of_points, R=radius)
+    # Scale 2: larger radius (coarser texture)
+    hist2 = _lbp_hist(img_arr, P=24, R=3)
+
+    return np.concatenate([hist1, hist2])
 
 
 def combine_features(
