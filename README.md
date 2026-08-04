@@ -11,6 +11,7 @@ This repository contains a machine learning workflow for bird species classifica
 - `figures/` — plots, charts, and visualizations.
 - `report/` — final report materials.
 - `presentation/` — slides and presentation assets.
+- add more...
 
 ## Workflow
 
