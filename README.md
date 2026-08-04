@@ -22,8 +22,9 @@ This repository contains a machine learning workflow for bird species classifica
 
 ## Environment
 
-Install dependencies with:
 
+Install dependencies with:
+methods
 ```bash
 add this
 pip install -r requirements.txt
